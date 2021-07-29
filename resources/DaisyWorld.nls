@@ -1,0 +1,229 @@
+;; Define the global variables
+globals [
+  max-age               ;; maximum age that all daisies live to
+  global-temperature    ;; the average temperature of the patches in the world
+  num-blacks            ;; the number of black daisies
+  num-whites            ;; the number of white daisies
+  scenario-phase        ;; interval counter used to keep track of what portion of scenario is currently occurring
+  ]
+
+;; Define a breed
+;; daisy is a member of the breed
+breed [daisies daisy]
+
+;; it deifnes the variable temperature that all pataches can use,
+;; which basically means temperature is one of the property of patches
+patches-own [temperature]  ;; local temperature at this location
+
+;;similiar to patches-own, defines the properties of daisies
+daisies-own [
+  age       ;; age of the daisy
+  albedo    ;; fraction (0-1) of energy absorbed as heat from sunlight
+]
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Setup Procedures ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to setup
+  ;; combines the effects of clear-globals, clear-ticks, clear-turtles, clear-patches, clear-drawing, clear-all-plots, and clear-output.
+  clear-all
+  ;; set the shape of daisies to "flower"
+  set-default-shape daisies "flower"
+  ;; ask all the patches to set the color of patch(pcolor) to be gray
+  ask patches [ set pcolor gray ]
+
+  set max-age 25
+  set global-temperature 0
+
+  if (scenario = "ramp-up-ramp-down"    ) [ set solar-luminosity 0.8 ]
+  if (scenario = "low solar luminosity" ) [ set solar-luminosity 0.6 ]
+  if (scenario = "our solar luminosity" ) [ set solar-luminosity 1.0 ]
+  if (scenario = "high solar luminosity") [ set solar-luminosity 1.4 ]
+
+  seed-blacks-randomly
+  seed-whites-randomly
+  ;; ask all daisies to ???????
+  ask daisies [set age random max-age]
+  ;; ask all patches to calculate their temperature
+  ask patches [calc-temperature]
+  ;; set the global temperature to be the mean of all patches' temperatures
+  set global-temperature (mean [temperature] of patches)
+  update-display
+  reset-ticks
+end
+
+to seed-blacks-randomly
+   ;; ask certain amounts of patches without daises to create 1 black daisies on their local patches 
+   ask n-of round ((start-%-blacks * count patches) / 100) patches with [not any? daisies-here]
+     [ sprout-daisies 1 [set-as-black] ]
+end
+
+to seed-whites-randomly
+   ask n-of floor ((start-%-whites * count patches) / 100) patches with [not any? daisies-here]
+     [ sprout-daisies 1 [set-as-white] ]
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Runtime Procedures ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+to go
+   ;; ask all patches to calculate their temperature
+   ask patches [calc-temperature]
+   ;; tells each patch to give equal shares of 50% of the temperature to its eight neighboring patches.
+   ;; Regardless of topology the sum of patch-variable will be conserved across the world. 
+   ;; (If a patch has fewer than eight neighbors, each neighbor still gets an eighth share; the patch keeps any leftover shares.)
+   diffuse temperature .5
+   ask daisies [check-survivability]
+   set global-temperature (mean [temperature] of patches)
+   update-display
+   ;; advances the tick counter by one and updates all plots.
+   tick
+   if scenario = "ramp-up-ramp-down" [
+     if ticks > 200 and ticks <= 400 [
+      ;; round up the solar-lumniosity to 3 decimal places
+       set solar-luminosity precision (solar-luminosity + 0.005) 4
+     ]
+     if ticks > 600 and ticks <= 850 [
+       set solar-luminosity precision (solar-luminosity - 0.0025) 4
+     ]
+   ]
+   if scenario = "low solar luminosity"  [ set solar-luminosity 0.6 ]
+   if scenario = "our solar luminosity"  [ set solar-luminosity 1.0 ]
+   if scenario = "high solar luminosity" [ set solar-luminosity 1.4 ]
+end
+
+to set-as-black ;; turtle procedure
+  set color black
+  set albedo albedo-of-blacks
+  set age 0
+  set size 0.6
+end
+
+to set-as-white  ;; turtle procedure
+  set color white
+  set albedo albedo-of-whites
+  set age 0
+  set size 0.6
+end
+
+to check-survivability ;; turtle procedure
+  let seed-threshold 0
+  ;; noboody: This is a special value which some primitives such as turtle, one-of, max-one-of, etc. report to indicate that no agent was found. Also, when a turtle dies, it becomes equal to nobody.
+  let not-empty-spaces nobody
+  let seeding-place nobody
+
+  set age (age + 1)
+  ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#ifelse
+  ifelse age < max-age
+  [
+     ;; calculate derivative: 0.1457 - 0.0064temp = 0 -> temp = 22.5
+     set seed-threshold ((0.1457 * temperature) - (0.0032 * (temperature ^ 2)) - 0.6443)
+     ;; This equation may look complex, but it is just a parabola.
+     ;; This parabola has a peak value of 1 -- the maximum growth factor possible at an optimum
+     ;; temperature of 22.5 degrees C
+     ;; -- and drops to zero at local temperatures of 5 degrees C and 40 degrees C. [the x-intercepts]
+     ;; Thus, growth of new daisies can only occur within this temperature range,
+     ;; with decreasing probability of growth new daisies closer to the x-intercepts of the parabolas
+     ;; remember, however, that this probability calculation is based on the local temperature.
+     
+     ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#random-float
+     ;; random-float number
+     ;; If number is positive, reports a random floating point number greater than or equal to 0 but strictly less than number.
+     if (random-float 1.0 < seed-threshold) [
+
+       ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#with
+       ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#any
+       ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#not
+       ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#with
+       ;; not any? daisies-here means if there is any daisy, then return false, else return true
+       ;; pick one of its neighbors randomly that does not have daisies as the seeding place
+       set seeding-place one-of neighbors with [not any? daisies-here]
+       
+       if (seeding-place != nobody)
+       [
+         ;; if the color of this daisy is white
+         if (color = white)
+         [
+           ;; sprout one white daisy
+           ask seeding-place [sprout-daisies 1 [set-as-white]  ]
+         ]
+         if (color = black)
+         [
+           ask seeding-place [sprout-daisies 1 [set-as-black]  ]
+         ]
+       ]
+     ]
+  ]
+  ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#die
+  [die]
+end
+
+to calc-temperature  ;; patch procedure
+  let absorbed-luminosity 0
+  let local-heating 0
+  ifelse not any? daisies-here
+  [   ;; the percentage of absorbed energy is calculated (1 - albedo-of-surface) and then multiplied by the solar-luminosity
+      ;; to give a scaled absorbed-luminosity.
+    set absorbed-luminosity ((1 - albedo-of-surface) * solar-luminosity)
+  ]
+  [
+      ;; the percentage of absorbed energy is calculated (1 - albedo) and then multiplied by the solar-luminosity
+      ;; to give a scaled absorbed-luminosity.
+    ask one-of daisies-here
+      [set absorbed-luminosity ((1 - albedo) * solar-luminosity)]
+  ]
+  ;; local-heating is calculated as logarithmic function of solar-luminosity
+  ;; where a absorbed-luminosity of 1 yields a local-heating of 80 degrees C
+  ;; and an absorbed-luminosity of .5 yields a local-heating of approximately 30 C
+  ;; and a absorbed-luminosity of 0.01 yields a local-heating of approximately -273 C
+  ifelse absorbed-luminosity > 0
+      [set local-heating 72 * ln absorbed-luminosity + 80]
+      [set local-heating 80]
+  set temperature ((temperature + local-heating) / 2)
+     ;; set the temperature at this patch to be the average of the current temperature and the local-heating effect
+end
+
+;; THIS FUNCTION MIGHT NOT NEED TO BE IMPLEMENTED
+to paint-daisies   ;; daisy painting procedure which uses the mouse location draw daisies when the mouse button is down
+  if mouse-down?
+  [
+    ask patch mouse-xcor mouse-ycor [
+      ifelse not any? daisies-here
+      [
+        ;; paint-daisies-as is the parameter define in GUI
+        if paint-daisies-as = "add black"
+          [sprout-daisies 1 [set-as-black]]
+        if paint-daisies-as = "add white"
+          [sprout-daisies 1 [set-as-white]]
+      ]
+      [
+        if paint-daisies-as = "remove"
+          [ask daisies-here [die]]
+      ]
+      display  ;; update view
+    ]
+  ]
+end
+
+;; THIS FUNCTION MIGHT NOT NEED TO BE IMPLEMENTED
+to update-display
+;; show-temp-map? is the parameter define in GUI
+  ifelse (show-temp-map? = true)
+  ;; http://ccl.northwestern.edu/netlogo/docs/dictionary.html#scale-color
+  ;; set the color of patch to red, while the shade of red is depended on the temperature
+    [ ask patches [set pcolor scale-color red temperature -50 110] ]  ;; scale color of patches to the local temperature
+    [ ask patches [set pcolor grey] ]
+
+  ifelse (show-daisies? = true)
+    [ ask daisies [set hidden? false] ]
+    [ ask daisies [set hidden? true] ]
+end
+
+
+; Copyright 2006 Uri Wilensky.
+; See Info tab for full copyright and license.
